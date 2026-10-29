@@ -1,0 +1,356 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Keyward launch</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:#07090e}
+body{font-family:-apple-system,"SF Pro Display","Helvetica Neue",Arial,sans-serif;color:#eef1f7;-webkit-font-smoothing:antialiased}
+#stage{position:absolute;inset:0;overflow:hidden;background:radial-gradient(1200px 700px at 50% 40%,#151a27 0%,#0a0d14 60%,#07090e 100%)}
+#grid{position:absolute;inset:-200px;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:64px 64px}
+#glow{position:absolute;width:1100px;height:1100px;border-radius:50%;left:410px;top:-10px;background:radial-gradient(circle,rgba(217,119,87,.22),rgba(217,119,87,0) 65%);filter:blur(10px)}
+.scene{position:absolute;inset:0;opacity:0}
+.center{display:flex;flex-direction:column;align-items:center;justify-content:center}
+.mono{font-family:"SF Mono",Menlo,Monaco,monospace}
+.accent{background:linear-gradient(90deg,#f5b14c,#d97757);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* captions */
+#caption{position:absolute;left:50%;bottom:78px;transform:translateX(-50%);padding:18px 34px;border-radius:18px;background:rgba(10,13,20,.78);border:1px solid rgba(255,255,255,.09);backdrop-filter:blur(12px);font-size:40px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;opacity:0;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+
+/* chat (scene 1) */
+.chatwin{width:1040px;border-radius:26px;background:#141823;border:1px solid #232a3a;box-shadow:0 40px 120px rgba(0,0,0,.5);overflow:hidden}
+.chathead{height:64px;display:flex;align-items:center;gap:10px;padding:0 26px;border-bottom:1px solid #232a3a;color:#8b93a7;font-size:22px}
+.dot{width:14px;height:14px;border-radius:50%}
+.chatbody{padding:48px 40px 60px;min-height:330px;display:flex;flex-direction:column;gap:22px}
+.bubble{align-self:flex-end;max-width:900px;padding:24px 30px;border-radius:24px 24px 6px 24px;background:#2a3246;font-size:34px;line-height:1.35}
+.leak{border-radius:8px;padding:0 6px;transition:none}
+.ai{align-self:flex-start;color:#8b93a7;font-size:30px}
+
+/* big words (scene 2) */
+.big{font-size:128px;font-weight:800;letter-spacing:-.045em;line-height:1.02;text-align:center}
+.big span{display:inline-block}
+
+/* logo (scene 3, 9) */
+.logo{width:230px;height:230px;border-radius:52px;box-shadow:0 30px 90px rgba(217,119,87,.35)}
+.brand{font-size:120px;font-weight:800;letter-spacing:-.045em;margin-top:34px}
+.tag{font-size:46px;color:#aab2c5;font-weight:500;margin-top:14px;letter-spacing:-.01em}
+
+/* terminal */
+.term{position:absolute;left:150px;top:150px;width:1060px;height:690px;border-radius:22px;background:#0f1219;border:1px solid #242b3b;box-shadow:0 40px 120px rgba(0,0,0,.55);overflow:hidden}
+.termhead{height:56px;display:flex;align-items:center;gap:10px;padding:0 22px;border-bottom:1px solid #1e2431;color:#6f788c;font-size:20px}
+.termbody{padding:30px 34px;font-size:27px;line-height:1.75}
+.tl{opacity:0;white-space:pre}
+.prompt{color:#f5b14c}.ok{color:#5ad18a}.dim{color:#6f788c}.claude{color:#d97757}
+.mask{color:#fff;background:rgba(217,119,87,.25);border:1px solid rgba(217,119,87,.7);border-radius:8px;padding:2px 8px}
+
+/* mac dialog */
+.dlg{position:absolute;width:560px;border-radius:22px;background:rgba(38,42,52,.96);border:1px solid rgba(255,255,255,.12);box-shadow:0 40px 120px rgba(0,0,0,.6);padding:30px 32px 26px;opacity:0}
+.dlg .ttl{font-size:21px;color:#c6ccda;font-weight:600;text-align:center;margin-bottom:18px}
+.dlg .row{display:flex;gap:20px;align-items:flex-start}
+.dlg .ic{width:76px;height:76px;border-radius:18px;flex:none}
+.dlg .msg{font-size:23px;line-height:1.4;color:#e8ebf2}
+.dlg .msg small{display:block;color:#9aa3b5;font-size:19px;margin-top:6px}
+.field{margin-top:20px;height:54px;border-radius:12px;background:#151821;border:2px solid #3b82f6;display:flex;align-items:center;padding:0 16px;font-size:30px;letter-spacing:6px;color:#e8ebf2}
+.btns{display:flex;justify-content:flex-end;gap:12px;margin-top:22px}
+.b{padding:10px 26px;border-radius:10px;font-size:21px;font-weight:600;background:#4a4f5c;color:#eee}
+.b.p{background:#3b82f6;color:#fff}
+
+/* touch id sheet */
+.tid{position:absolute;left:1180px;top:230px;width:600px;border-radius:26px;background:rgba(36,40,50,.97);border:1px solid rgba(255,255,255,.12);box-shadow:0 40px 120px rgba(0,0,0,.6);padding:40px 40px 34px;text-align:center;opacity:0}
+.tid h3{font-size:28px;font-weight:700;margin:22px 0 10px}
+.tid p{font-size:22px;color:#aab2c5;line-height:1.45}
+.tid code{display:block;margin:16px auto 0;font-family:"SF Mono",Menlo,monospace;font-size:21px;color:#f5b14c;background:#151821;border-radius:10px;padding:12px 14px;text-align:left}
+.tid .hint{margin-top:22px;font-size:19px;color:#7d869a}
+
+/* 2fa */
+.codebox{display:flex;gap:16px;justify-content:center;margin-top:28px}
+.cb{width:76px;height:96px;border-radius:16px;background:#151821;border:2px solid #343b4c;font-size:52px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.chip{display:inline-flex;align-items:center;gap:12px;margin-top:30px;padding:12px 22px;border-radius:999px;background:rgba(90,209,138,.12);border:1px solid rgba(90,209,138,.5);color:#8fe3b0;font-size:24px;font-weight:600}
+
+/* features */
+.cards{display:grid;grid-template-columns:repeat(2,640px);gap:30px}
+.card{height:210px;border-radius:26px;background:linear-gradient(160deg,#171c29,#10141d);border:1px solid #262e40;padding:38px 40px;opacity:0;box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.card .k{font-size:22px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+.card .v{font-size:44px;font-weight:700;margin-top:16px;letter-spacing:-.02em}
+
+/* install */
+.install{margin-top:46px;font-size:40px;padding:26px 40px;border-radius:20px;background:#0f1219;border:1px solid #2a3244;min-width:1000px;text-align:left}
+.url{margin-top:30px;font-size:34px;color:#aab2c5}
+
+/* chrome sign-in (coming next) */
+.browser{width:1180px;border-radius:20px;background:#f4f5f7;box-shadow:0 40px 120px rgba(0,0,0,.55);overflow:hidden;color:#1f2430}
+.btop{height:62px;background:#dfe3ea;display:flex;align-items:center;gap:10px;padding:0 20px}
+.btab{margin-left:18px;height:44px;margin-top:18px;padding:0 22px;border-radius:12px 12px 0 0;background:#f4f5f7;display:flex;align-items:center;font-size:19px;color:#3a4150}
+.burl{height:54px;display:flex;align-items:center;padding:0 22px;background:#f4f5f7;border-bottom:1px solid #dde1e8}
+.burl span{flex:1;height:36px;border-radius:18px;background:#e6e9ef;display:flex;align-items:center;padding:0 18px;font-size:19px;color:#4b5263}
+.bpage{height:560px;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#f7f8fa,#eef0f4)}
+.form{width:520px;background:#fff;border-radius:18px;padding:40px 44px;box-shadow:0 10px 40px rgba(20,30,60,.08)}
+.form h4{font-size:32px;font-weight:700;margin-bottom:26px}
+.form label{display:block;font-size:18px;color:#5b6273;margin:16px 0 8px}
+.inp{height:56px;border-radius:12px;border:2px solid #d5dae3;display:flex;align-items:center;padding:0 16px;font-size:22px;letter-spacing:.5px}
+.inp.focus{border-color:#3b82f6;box-shadow:0 0 0 4px rgba(59,130,246,.18)}
+.signin{margin-top:26px;height:56px;border-radius:12px;background:#1f2430;color:#fff;display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:600}
+.done{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;border-radius:18px;opacity:0;font-size:30px;font-weight:700;color:#16a34a}
+.badge{position:absolute;top:70px;left:50%;transform:translateX(-50%);padding:10px 22px;border-radius:999px;font-size:22px;font-weight:800;letter-spacing:.16em;color:#1a1206;background:linear-gradient(90deg,#f5b14c,#d97757)}
+#tid2{left:auto;right:150px;top:300px;width:540px}
+#fade{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none}
+</style></head>
+<body>
+<div id="stage">
+  <div id="grid"></div><div id="glow"></div>
+
+  <!-- 1: the leak -->
+  <div class="scene center" id="s1">
+    <div class="chatwin" id="chat">
+      <div class="chathead"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span style="margin-left:14px">AI chat</span></div>
+      <div class="chatbody">
+        <div class="bubble" id="bubble"><span id="typed"></span><span id="cursor1">|</span></div>
+        <div class="ai" id="aiReply" style="opacity:0">Thanks! I'll use that key…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2: the problem -->
+  <div class="scene center" id="s2">
+    <div class="big"><span id="w1">Stop</span> <span id="w2">pasting</span> <span id="w3">secrets</span><br><span id="w4">into</span> <span id="w5" class="accent">AI.</span></div>
+  </div>
+
+  <!-- 3: logo -->
+  <div class="scene center" id="s3">
+    <img class="logo" id="logo3" src="../assets/icon.svg">
+    <div class="brand" id="brand3">Keyward</div>
+    <div class="tag" id="tag3">A vault Claude can use. <span class="accent" style="font-weight:700">But never read.</span></div>
+  </div>
+
+  <!-- 4–6: terminal story -->
+  <div class="scene" id="s4">
+    <div class="term" id="term">
+      <div class="termhead"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span style="margin-left:14px">claude — ~/my-site</span></div>
+      <div class="termbody mono">
+        <div class="tl" id="t1"><span class="prompt">&gt; </span><span id="t1txt"></span></div>
+        <div class="tl" id="t2"><span class="claude">●</span> I need your AWS key. Opening a Keyward dialog…</div>
+        <div class="tl" id="t3"><span class="ok">✓</span> Saved AWS_SECRET <span class="dim">· value never shown to Claude</span></div>
+        <div class="tl" id="t4"><span class="claude">●</span> keyward_run <span class="dim">aws s3 sync ./dist s3://my-site</span></div>
+        <div class="tl" id="t5"><span class="ok">✓</span> Touch ID approved</div>
+        <div class="tl" id="t6"><span class="dim">upload:</span> dist/index.html → s3://my-site/</div>
+        <div class="tl" id="t7"><span class="dim">upload:</span> dist/app.js → s3://my-site/</div>
+        <div class="tl" id="t8"><span class="dim">debug:</span>  key = <span class="mask" id="maskchip">«AWS_SECRET»</span></div>
+      </div>
+    </div>
+    <div class="dlg" id="dlg" style="left:1180px;top:270px">
+      <div class="ttl">Keyward</div>
+      <div class="row"><img class="ic" src="../assets/icon.svg"><div class="msg">Enter AWS_SECRET<small>Why: deploy the site to S3</small><small>Sealed by your Mac's Secure Enclave. Claude can use it, but never sees it.</small></div></div>
+      <div class="field" id="field"></div>
+      <div class="btns"><span class="b">Cancel</span><span class="b p" id="saveBtn">Save</span></div>
+    </div>
+    <div class="tid" id="tid">
+      <svg id="fp" width="120" height="120" viewBox="0 0 120 120"><g fill="none" stroke-linecap="round" stroke-width="5">
+        <path id="fpBase" stroke="#4b5366" d="M30 50a30 30 0 0 1 60 0v8M40 52a20 20 0 0 1 40 0v14c0 12-4 22-10 30M50 54a10 10 0 0 1 20 0v14c0 14-6 26-14 34M60 56v14c0 16-8 30-18 38M36 70c0 14-4 24-10 32M88 70c0 10-2 18-6 26"/>
+        <path id="fpFill" stroke="#ff5f6d" stroke-dasharray="600" stroke-dashoffset="600" d="M30 50a30 30 0 0 1 60 0v8M40 52a20 20 0 0 1 40 0v14c0 12-4 22-10 30M50 54a10 10 0 0 1 20 0v14c0 14-6 26-14 34M60 56v14c0 16-8 30-18 38M36 70c0 14-4 24-10 32M88 70c0 10-2 18-6 26"/></g>
+        <g id="fpCheck" opacity="0"><circle cx="60" cy="60" r="50" fill="#28c840"/><path d="M38 61l15 15 30-32" stroke="#fff" stroke-width="9" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g>
+      </svg>
+      <h3>Keyward</h3>
+      <p>Let Claude use <b style="color:#fff">AWS_SECRET</b> to run:</p>
+      <code>aws s3 sync ./dist s3://my-site</code>
+      <div class="hint">Touch ID or enter your password</div>
+    </div>
+  </div>
+
+  <!-- 7: 2-step -->
+  <div class="scene center" id="s7">
+    <div class="dlg" id="dlg2" style="position:relative;width:820px;opacity:1;padding:44px 50px 40px;text-align:center">
+      <div class="ttl" style="font-size:24px">Keyward · 2-step verification</div>
+      <div class="msg" style="font-size:30px">Enter the current code for <b>AWS_CONSOLE</b></div>
+      <div class="codebox" id="codebox"></div>
+      <div class="btns" style="justify-content:center;margin-top:30px"><span class="b">Cancel</span><span class="b p" id="useBtn">Use code</span></div>
+    </div>
+    <div class="chip" id="chip2" style="opacity:0">⏱ Used once · deleted in 5 minutes</div>
+  </div>
+
+  <!-- 8: features -->
+  <div class="scene center" id="s8">
+    <div class="cards">
+      <div class="card" id="c1"><div class="k accent">Encryption</div><div class="v">Sealed by the Secure Enclave</div></div>
+      <div class="card" id="c2"><div class="k accent">Approval</div><div class="v">Touch ID for every use</div></div>
+      <div class="card" id="c3"><div class="k accent">Privacy</div><div class="v">No read tool. Ever.</div></div>
+      <div class="card" id="c4"><div class="k accent">Open source</div><div class="v">Free · MIT · two small files</div></div>
+    </div>
+  </div>
+
+
+  <!-- 10: coming next — sign in to websites -->
+  <div class="scene center" id="s10">
+    <div class="badge">COMING NEXT</div>
+    <div class="browser" id="browser" style="margin-right:300px">
+      <div class="btop"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><div class="btab">🔒 Sign in · example.com</div></div>
+      <div class="burl"><span>example.com/login</span></div>
+      <div class="bpage"><div class="form" style="position:relative">
+        <h4>Sign in</h4>
+        <label>Email</label><div class="inp">you@example.com</div>
+        <label>Password</label><div class="inp" id="pwfield"></div>
+        <div class="signin" id="signinBtn">Sign in</div>
+        <div class="done" id="signedIn"><div style="font-size:64px">✓</div>Signed in</div>
+      </div></div>
+    </div>
+    <div class="tid" id="tid2">
+      <svg width="110" height="110" viewBox="0 0 120 120"><g fill="none" stroke-linecap="round" stroke-width="5">
+        <path stroke="#4b5366" d="M30 50a30 30 0 0 1 60 0v8M40 52a20 20 0 0 1 40 0v14c0 12-4 22-10 30M50 54a10 10 0 0 1 20 0v14c0 14-6 26-14 34M60 56v14c0 16-8 30-18 38M36 70c0 14-4 24-10 32M88 70c0 10-2 18-6 26"/>
+        <path id="fpFill2" stroke="#ff5f6d" stroke-dasharray="600" stroke-dashoffset="600" d="M30 50a30 30 0 0 1 60 0v8M40 52a20 20 0 0 1 40 0v14c0 12-4 22-10 30M50 54a10 10 0 0 1 20 0v14c0 14-6 26-14 34M60 56v14c0 16-8 30-18 38M36 70c0 14-4 24-10 32M88 70c0 10-2 18-6 26"/></g>
+        <g id="fpCheck2" opacity="0"><circle cx="60" cy="60" r="50" fill="#28c840"/><path d="M38 61l15 15 30-32" stroke="#fff" stroke-width="9" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g>
+      </svg>
+      <h3>Keyward</h3>
+      <p>Let Claude type the password for <b style="color:#fff">EXAMPLE_LOGIN</b> into Chrome</p>
+      <div class="hint">Touch ID to continue</div>
+    </div>
+  </div>
+
+  <!-- 9: install -->
+  <div class="scene center" id="s9">
+    <img class="logo" src="../assets/icon.svg" style="width:150px;height:150px;border-radius:34px">
+    <div class="brand" style="font-size:96px;margin-top:22px">Keyward</div>
+    <div class="install mono" id="install"><span class="prompt">&gt; </span><span id="instTxt"></span><span id="cursor9" style="color:#f5b14c">▋</span></div>
+    <div class="url" id="url">github.com/kirpajeet12/keyward · for Claude Code &amp; Claude desktop</div>
+  </div>
+
+  <div id="caption"></div>
+  <div id="fade"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const eo = x => 1 - Math.pow(1 - x, 3);
+const eio = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const back = x => { const c = 1.7; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+// Opacity envelope: fade in over [a, a+fi], hold, fade out over [b-fo, b]
+const env = (t, a, b, fi = .4, fo = .4) => Math.min(seg(t, a, a + fi), 1 - seg(t, b - fo, b));
+const typeText = (s, t, a, b) => s.slice(0, Math.round(s.length * seg(t, a, b)));
+
+const LEAK = "here's my AWS secret key: wJalrXUtnFEMI/K7MDENG/bPxRfiCY";
+const CMD = 'deploy the site to AWS';
+const INSTALL = '/plugin marketplace add kirpajeet12/keyward';
+const CODE = '481902';
+const CAPTIONS = [
+  [0.4, 4.0, "We've all done this."],
+  [12.6, 16.6, 'Secrets go into a secure Mac dialog. Never the chat.'],
+  [17.0, 21.0, 'Every use needs your Touch ID.'],
+  [21.6, 25.0, 'Claude only ever sees «AWS_SECRET».'],
+  [25.4, 29.4, '2-step codes: used once, then gone.'],
+  [34.6, 39.5, 'Next: sign in to websites. Claude never sees the password.'],
+];
+for (let i = 0; i < 6; i++) { const d = document.createElement('div'); d.className = 'cb'; d.id = 'cb' + i; $('codebox').appendChild(d); }
+
+function show(id, o, tf) { const el = $(id); el.style.opacity = o; if (tf !== undefined) el.style.transform = tf; }
+
+function render(t) {
+  // background drift
+  $('grid').style.transform = `translate(${-t * 6 % 64}px, ${-t * 4 % 64}px)`;
+  $('glow').style.transform = `translate(${Math.sin(t * .4) * 120}px, ${Math.cos(t * .3) * 60}px)`;
+
+  // 1: leak
+  const o1 = env(t, 0, 4.3, .5, .5);
+  show('s1', o1, `scale(${1 + seg(t, 0, 4.3) * .04})`);
+  $('typed').innerHTML = (() => {
+    const s = typeText(LEAK, t, .5, 2.4); const cut = LEAK.indexOf('wJal');
+    if (s.length <= cut) return s;
+    const hot = seg(t, 2.7, 3.0);
+    return s.slice(0, cut) + `<span class="leak" style="background:rgba(255,80,90,${.55 * hot});color:${hot > .5 ? '#fff' : 'inherit'}">${s.slice(cut)}</span>`;
+  })();
+  $('cursor1').style.opacity = t < 2.6 && Math.floor(t * 3) % 2 === 0 ? 1 : 0;
+  const shake = t > 2.7 && t < 3.2 ? Math.sin(t * 90) * 8 * (1 - seg(t, 2.7, 3.2)) : 0;
+  $('chat').style.transform = `translateX(${shake}px)`;
+  $('aiReply').style.opacity = seg(t, 3.1, 3.5);
+
+  // 2: big words
+  show('s2', env(t, 4.3, 7.7, .2, .4));
+  ['w1', 'w2', 'w3', 'w4', 'w5'].forEach((w, i) => {
+    const p = eo(seg(t, 4.4 + i * .28, 4.9 + i * .28));
+    $(w).style.opacity = p; $(w).style.transform = `translateY(${(1 - p) * 60}px)`;
+  });
+
+  // 3: logo
+  show('s3', env(t, 7.7, 11.0, .1, .5));
+  const lp = back(seg(t, 7.8, 8.6));
+  $('logo3').style.transform = `scale(${.4 + .6 * lp}) rotate(${(1 - seg(t, 7.8, 8.6)) * -12}deg)`;
+  $('logo3').style.opacity = seg(t, 7.8, 8.1);
+  const bp = eo(seg(t, 8.4, 9.0)); $('brand3').style.opacity = bp; $('brand3').style.transform = `translateY(${(1 - bp) * 30}px)`;
+  const tp = eo(seg(t, 9.0, 9.6)); $('tag3').style.opacity = tp; $('tag3').style.transform = `translateY(${(1 - tp) * 20}px)`;
+
+  // 4–6: terminal
+  const o4 = env(t, 11.0, 25.2, .5, .4);
+  show('s4', o4);
+  const tz = eo(seg(t, 11.0, 11.8));
+  $('term').style.transform = `translateY(${(1 - tz) * 40}px) scale(${.96 + .04 * tz})`;
+  $('t1').style.opacity = t > 11.2 ? 1 : 0; $('t1txt').textContent = typeText(CMD, t, 11.3, 12.2);
+  [['t2', 12.6], ['t3', 16.1], ['t4', 16.7], ['t5', 19.5], ['t6', 20.4], ['t7', 20.9], ['t8', 21.6]].forEach(([id, at]) => {
+    const p = eo(seg(t, at, at + .35)); $(id).style.opacity = p; $(id).style.transform = `translateX(${(1 - p) * 16}px)`;
+  });
+  const glowMask = seg(t, 21.9, 22.4) * (1 - seg(t, 24.2, 24.9));
+  $('maskchip').style.boxShadow = `0 0 ${40 * glowMask}px rgba(217,119,87,${.9 * glowMask})`;
+
+  // dialog
+  const dIn = eo(seg(t, 13.1, 13.6)), dOut = seg(t, 15.7, 16.0);
+  $('dlg').style.opacity = dIn * (1 - dOut);
+  $('dlg').style.transform = `translateY(${(1 - dIn) * 30 + dOut * 20}px) scale(${.94 + .06 * dIn})`;
+  $('field').textContent = '•'.repeat(Math.round(22 * seg(t, 13.8, 15.0)));
+  $('saveBtn').style.transform = `scale(${t > 15.35 && t < 15.6 ? .92 : 1})`;
+  $('saveBtn').style.filter = t > 15.35 && t < 15.6 ? 'brightness(1.3)' : 'none';
+
+  // Touch ID
+  const sIn = eo(seg(t, 17.0, 17.5)), sOut = seg(t, 19.6, 20.0);
+  $('tid').style.opacity = sIn * (1 - sOut);
+  $('tid').style.transform = `translateY(${(1 - sIn) * -40}px) scale(${.95 + .05 * sIn})`;
+  $('fpFill').style.strokeDashoffset = 600 * (1 - seg(t, 17.9, 18.9));
+  $('fpCheck').setAttribute('opacity', seg(t, 19.0, 19.2));
+
+  // 7: 2-step
+  show('s7', env(t, 25.2, 29.6, .4, .4), `scale(${.97 + .03 * eo(seg(t, 25.2, 25.8))})`);
+  for (let i = 0; i < 6; i++) {
+    const at = 26.0 + i * .26, p = seg(t, at, at + .12), cb = $('cb' + i);
+    cb.textContent = p > 0 ? CODE[i] : '';
+    cb.style.borderColor = p > 0 ? '#3b82f6' : '#343b4c';
+    cb.style.transform = `scale(${1 + .12 * (p > 0 && p < 1 ? 1 : 0)})`;
+  }
+  $('useBtn').style.transform = `scale(${t > 27.85 && t < 28.1 ? .92 : 1})`;
+  const cp = eo(seg(t, 28.2, 28.6)); $('chip2').style.opacity = cp; $('chip2').style.transform = `translateY(${(1 - cp) * 20}px)`;
+
+  // 8: features
+  show('s8', env(t, 29.6, 33.6, .3, .4));
+  ['c1', 'c2', 'c3', 'c4'].forEach((c, i) => {
+    const p = eo(seg(t, 29.8 + i * .32, 30.4 + i * .32));
+    $(c).style.opacity = p; $(c).style.transform = `translateY(${(1 - p) * 50}px)`;
+  });
+
+  // 10: coming next — Chrome sign-in
+  show('s10', env(t, 33.6, 39.8, .4, .4));
+  const bz = eo(seg(t, 33.6, 34.3)); $('browser').style.transform = `translateY(${(1 - bz) * 40}px) scale(${.96 + .04 * bz})`;
+  $('pwfield').className = 'inp' + (t > 34.6 && t < 38.2 ? ' focus' : '');
+  const t2In = eo(seg(t, 35.0, 35.5)), t2Out = seg(t, 37.0, 37.3);
+  $('tid2').style.opacity = t2In * (1 - t2Out);
+  $('tid2').style.transform = `translateY(${(1 - t2In) * -30}px) scale(${.95 + .05 * t2In})`;
+  $('fpFill2').style.strokeDashoffset = 600 * (1 - seg(t, 35.7, 36.6));
+  $('fpCheck2').setAttribute('opacity', seg(t, 36.7, 36.9));
+  $('pwfield').textContent = '•'.repeat(Math.round(14 * seg(t, 37.3, 38.0)));
+  $('signinBtn').style.filter = t > 38.1 && t < 38.35 ? 'brightness(1.6)' : 'none';
+  $('signedIn').style.opacity = eo(seg(t, 38.4, 38.8));
+
+  // 9: install
+  show('s9', env(t, 39.8, 44.5, .5, .01));
+  $('instTxt').textContent = typeText(INSTALL, t, 40.6, 42.1);
+  $('cursor9').style.opacity = Math.floor(t * 2.5) % 2 === 0 ? 1 : 0;
+  const up = eo(seg(t, 42.2, 42.7)); $('url').style.opacity = up; $('url').style.transform = `translateY(${(1 - up) * 16}px)`;
+
+  // captions
+  const cap = CAPTIONS.find(([a, b]) => t >= a && t <= b);
+  const c = $('caption');
+  if (cap) { c.textContent = cap[2]; const o = env(t, cap[0], cap[1], .3, .3); c.style.opacity = o; c.style.transform = `translateX(-50%) translateY(${(1 - eo(seg(t, cap[0], cap[0] + .35))) * 20}px)`; }
+  else c.style.opacity = 0;
+
+  $('fade').style.opacity = seg(t, 43.3, 44.0);
+}
+window.render = render;
+window.DURATION = 44;
+const params = new URLSearchParams(location.search);
+if (params.has('t')) render(+params.get('t'));
+else { const start = performance.now(); (function loop() { render(((performance.now() - start) / 1000) % 44); requestAnimationFrame(loop); })(); }
+</script>
+</body></html>

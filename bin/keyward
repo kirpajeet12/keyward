@@ -1,0 +1,524 @@
+#!/usr/bin/env -S python3 -I
+"""Keyward — a vault Claude can use but never read.
+
+Secrets are sealed to a key in your Mac's Secure Enclave. Saving needs nothing;
+every use needs Touch ID (or your Mac password), and the prompt shows what will run.
+
+  keyward init                               create the vault key in the Secure Enclave
+  keyward ask NAME [--type text|login|file] [--reason TEXT]
+                                             secure Mac dialog to enter a secret (or pick a file)
+  keyward code NAME [--reason TEXT]          ask for a one-time 2-step code (expires in 5 minutes, used once)
+  keyward set NAME [--file PATH]             type a secret here (hidden) or store a file
+  keyward list                               names and notes only, never values
+  keyward rm NAME                            delete a secret
+  keyward run --with NAME[=VAR] ... -- COMMAND ...
+                                             run COMMAND with secrets in env vars (Touch ID first);
+                                             secret values in the output are replaced with «NAME»
+  keyward mcp                                run as an MCP connector for Claude Code / Claude desktop
+  keyward config password on|off             also accept your Mac password (default: Touch ID only)
+  keyward status                             show vault status
+"""
+import base64, datetime, getpass, json, os, re, shlex, subprocess, sys, tempfile, time, urllib.parse
+
+VERSION = '1.0.0'
+HOME = os.environ.get('KEYWARD_HOME') or os.path.expanduser('~/.keyward')
+VAULT = os.path.join(HOME, 'vault.json')
+CONFIG = os.path.join(HOME, 'config.json')
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+CORE_SRC = os.path.join(ROOT, 'core', 'keyward-core.swift')
+NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]{0,63}$')
+CODE_TTL = 300
+MAX_OUTPUT = 20000
+
+
+class KeywardError(Exception):
+    pass
+
+
+# ---------- core (Secure Enclave helper) ----------
+
+APP = os.path.join(HOME, 'Keyward.app')
+APP_BIN = os.path.join(APP, 'Contents', 'MacOS', 'keyward-core')
+INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>io.github.kirpajeet12.keyward</string>
+<key>CFBundleName</key><string>Keyward</string>
+<key>CFBundleDisplayName</key><string>Keyward</string>
+<key>CFBundleExecutable</key><string>keyward-core</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>%s</string>
+<key>CFBundleShortVersionString</key><string>%s</string>
+<key>LSUIElement</key><true/>
+<key>LSMinimumSystemVersion</key><string>13.0</string>
+</dict></plist>
+""" % (VERSION, VERSION)
+
+
+def core_path():
+    """Build the Swift helper on first use (and after updates), as both a CLI and Keyward.app."""
+    if not os.path.exists(CORE_SRC):
+        raise KeywardError(f'missing {CORE_SRC}')
+    if not os.path.exists(APP_BIN) or os.path.getmtime(APP_BIN) < os.path.getmtime(CORE_SRC):
+        os.makedirs(os.path.dirname(APP_BIN), mode=0o700, exist_ok=True)
+        r = subprocess.run(['swiftc', '-O', '-o', APP_BIN, CORE_SRC], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise KeywardError('could not build keyward-core (install Xcode Command Line Tools: xcode-select --install)\n' + r.stderr[-800:])
+        with open(os.path.join(APP, 'Contents', 'Info.plist'), 'w') as f:
+            f.write(INFO_PLIST)
+        res = os.path.join(APP, 'Contents', 'Resources')
+        os.makedirs(res, exist_ok=True)
+        subprocess.run(['codesign', '--force', '--sign', '-', APP], capture_output=True)
+    return APP_BIN
+
+
+def core(args, data=None):
+    r = subprocess.run([core_path(), *args], input=data, capture_output=True)
+    if r.returncode != 0:
+        msg = r.stderr.decode(errors='replace').strip().removeprefix('keyward-core: ')
+        raise KeywardError(msg or 'keyward-core failed')
+    return r.stdout.decode()
+
+
+def config():
+    try:
+        with open(CONFIG) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def set_config(key, value):
+    c = config()
+    c[key] = value
+    os.makedirs(HOME, mode=0o700, exist_ok=True)
+    with open(os.open(CONFIG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
+        json.dump(c, f, indent=1)
+
+
+def unseal_via_app(blobs, reason, timeout=180):
+    """Touch ID only appears for a real app, so unsealing runs inside Keyward.app (launched with `open`)."""
+    core_path()
+    run_dir = tempfile.mkdtemp(prefix='unseal-', dir=HOME)
+    inp, out = os.path.join(run_dir, 'in'), os.path.join(run_dir, 'out')
+    try:
+        with open(os.open(inp, os.O_WRONLY | os.O_CREAT, 0o600), 'w') as f:
+            f.write('\n'.join(blobs) + '\n')
+        cmd = ['open', '-W', '-n', '-a', APP]
+        if os.environ.get('KEYWARD_HOME'):
+            cmd += ['--env', f'KEYWARD_HOME={HOME}']
+        cmd += ['--args', 'unseal', '--reason', reason, '--in', inp, '--out', out]
+        if not config().get('allow_password'):
+            cmd.append('--biometrics-only')
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            subprocess.run(['pkill', '-f', f'{APP_BIN} unseal'], capture_output=True)
+            raise KeywardError('denied: no answer to the Touch ID prompt in time')
+        try:
+            with open(out) as f:
+                lines = f.read().splitlines()
+        except FileNotFoundError:
+            raise KeywardError('Keyward.app did not return a result')
+        if not lines or lines[0] != 'OK':
+            raise KeywardError((lines[0].split(' ', 2)[2] if lines and lines[0].startswith('ERR') else 'unseal failed'))
+        return lines[1:]
+    finally:
+        for f in (inp, out):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        os.rmdir(run_dir)
+
+
+def seal(data: bytes) -> str:
+    return core(['seal'], data).strip()
+
+
+def unseal(blobs, reason):
+    if os.environ.get('KEYWARD_INSECURE_TEST_KEY') == '1':
+        out = core(['unseal', '--reason', reason], ('\n'.join(blobs) + '\n').encode()).split()
+    else:
+        out = unseal_via_app(blobs, reason)
+    return [base64.b64decode(x) for x in out]
+
+
+# ---------- vault file ----------
+
+def load():
+    try:
+        with open(VAULT) as f:
+            v = json.load(f)
+    except FileNotFoundError:
+        v = {'version': 1, 'secrets': {}}
+    now = time.time()
+    expired = [n for n, e in v['secrets'].items() if e.get('expires') and e['expires'] < now]
+    for n in expired:
+        del v['secrets'][n]
+    if expired:
+        save(v)
+    return v
+
+
+def save(v):
+    os.makedirs(HOME, mode=0o700, exist_ok=True)
+    tmp = VAULT + '.tmp'
+    with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as f:
+        json.dump(v, f, indent=1, sort_keys=True)
+    os.replace(tmp, VAULT)
+
+
+def check_name(name):
+    if not NAME_RE.match(name or ''):
+        raise KeywardError(f'bad name {name!r}: use letters, numbers and _ (for example AWS_SECRET_KEY)')
+    return name
+
+
+def ensure_init():
+    if 'key=false' in core(['status']):
+        core(['init'])
+
+
+def put(name, kind, payload: bytes, note='', expires=None):
+    check_name(name)
+    if not payload:
+        raise KeywardError('nothing entered; not saved')
+    ensure_init()
+    v = load()
+    v['secrets'][name] = {'kind': kind, 'note': note, 'sealed': seal(payload),
+                          'updated': datetime.datetime.now().isoformat(timespec='seconds')}
+    if expires:
+        v['secrets'][name]['expires'] = expires
+    save(v)
+
+
+def remove(name):
+    v = load()
+    if v['secrets'].pop(check_name(name), None) is None:
+        raise KeywardError(f'{name} is not in the vault')
+    save(v)
+
+
+def listing():
+    v = load()
+    rows = []
+    for n in sorted(v['secrets']):
+        e = v['secrets'][n]
+        extra = ' (expires in %ds, single use)' % max(0, int(e['expires'] - time.time())) if e.get('expires') else ''
+        rows.append({'name': n, 'type': e['kind'], 'note': e.get('note', ''), 'updated': e['updated'], 'extra': extra})
+    return rows
+
+
+# ---------- dialogs ----------
+
+def as_str(s):
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def osa(script):
+    r = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise KeywardError('cancelled by the user' if '-128' in r.stderr else 'dialog failed: ' + r.stderr.strip())
+    return r.stdout.rstrip('\n')
+
+
+def dialog(prompt, hidden=True, button='Save'):
+    return osa(f'text returned of (display dialog {as_str(prompt)} default answer "" '
+               f'{"with hidden answer " if hidden else ""}with title "Keyward" '
+               f'buttons {{"Cancel", {as_str(button)}}} default button {as_str(button)} with icon caution)')
+
+
+def why(reason):
+    return f'\n\nWhy: {reason}' if reason else ''
+
+
+FOOTER = '\n\nSealed by your Mac\'s Secure Enclave. Claude can use it, but never sees it.'
+
+
+def ask(name, kind='text', reason=''):
+    check_name(name)
+    if kind == 'file':
+        path = osa(f'POSIX path of (choose file with prompt {as_str(f"Keyward: choose the file for {name}.{why(reason)}")})')
+        with open(path, 'rb') as f:
+            put(name, 'file', f.read(), reason)
+    elif kind == 'login':
+        user = dialog(f'{name}: username or email{why(reason)}', hidden=False, button='Next')
+        pw = dialog(f'{name}: password for {user}{FOOTER}')
+        put(name, 'login', json.dumps({'username': user, 'password': pw}).encode(), reason)
+    elif kind == 'text':
+        put(name, 'text', dialog(f'Enter {name}{why(reason)}{FOOTER}').encode(), reason)
+    else:
+        raise KeywardError('type must be text, login or file')
+
+
+def ask_code(name, reason=''):
+    check_name(name)
+    code = dialog(f'2-step verification\n\nEnter the current code for {name}.{why(reason)}\n\n'
+                  'It is used once and deleted within 5 minutes.', hidden=False, button='Use code')
+    code = code.replace(' ', '')
+    put(name, 'code', code.encode(), reason or '2-step code', expires=time.time() + CODE_TTL)
+
+
+# ---------- running commands with secrets ----------
+
+def masks_for(name, value):
+    """Every form a secret might take in output: as-is, line by line, base64 and URL-encoded."""
+    forms = {value}
+    forms.update(l.strip() for l in value.splitlines())
+    forms.add(base64.b64encode(value.encode()).decode())
+    forms.add(urllib.parse.quote(value, safe=''))
+    return [(f, name) for f in forms if len(f) >= 4]
+
+
+def run_with(names_vars, command, reason_cmd, cwd=None, timeout=None, stream=None):
+    v = load()
+    missing = [n for n, _ in names_vars if n not in v['secrets']]
+    if missing:
+        raise KeywardError('not in the vault: ' + ', '.join(missing) + '. Ask for it with keyward ask (or keyward_request_secret).')
+    names = [n for n, _ in names_vars]
+    shown = reason_cmd if len(reason_cmd) <= 240 else reason_cmd[:237] + '...'
+    values = unseal([v['secrets'][n]['sealed'] for n in names],
+                    f'let Claude use {", ".join(names)} to run:\n{shown}')
+    env, masks, tmpfiles = dict(os.environ), [], []
+    try:
+        for (name, var), raw in zip(names_vars, values):
+            kind = v['secrets'][name]['kind']
+            if kind == 'file':
+                fd, path = tempfile.mkstemp(prefix='keyward-')
+                os.write(fd, raw)
+                os.close(fd)
+                os.chmod(path, 0o600)
+                tmpfiles.append(path)
+                env[var] = path
+                masks += masks_for(name, raw.decode(errors='ignore'))
+            elif kind == 'login':
+                cred = json.loads(raw)
+                env[var + '_USERNAME'] = cred['username']
+                env[var + '_PASSWORD'] = cred['password']
+                masks += masks_for(name, cred['password'])
+            else:
+                env[var] = raw.decode()
+                masks += masks_for(name, raw.decode())
+        masks.sort(key=lambda m: -len(m[0]))
+        proc = subprocess.Popen(command, env=env, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                shell=isinstance(command, str))
+        captured, start = [], time.time()
+        for line in iter(proc.stdout.readline, b''):
+            text = line.decode(errors='replace')
+            for secret, name in masks:
+                text = text.replace(secret, f'«{name}»')
+            if stream:
+                stream(text)
+            else:
+                captured.append(text)
+            if timeout and time.time() - start > timeout:
+                proc.kill()
+                captured.append(f'\n[keyward: stopped after {timeout}s]\n')
+                break
+        code = proc.wait()
+        # One-time 2-step codes are deleted after use.
+        used_codes = [n for n in names if v['secrets'][n]['kind'] == 'code']
+        if used_codes:
+            v2 = load()
+            for n in used_codes:
+                v2['secrets'].pop(n, None)
+            save(v2)
+        return code, ''.join(captured)
+    finally:
+        for p in tmpfiles:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+# ---------- MCP connector ----------
+
+TOOLS = [
+    {'name': 'keyward_list', 'description': 'List the secrets in the Keyward vault (names, types and notes only — never values). Check here before asking the user for a credential.',
+     'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'keyward_request_secret',
+     'description': 'Ask the user to securely add a secret. A hidden-input dialog appears on their Mac; the value is sealed by the Secure Enclave and never returned to you. Use type "login" for username + password, "file" for key files (.p8, .pem, .json). Tell the user in chat that a dialog is coming before calling this.',
+     'inputSchema': {'type': 'object', 'required': ['name', 'reason'], 'properties': {
+         'name': {'type': 'string', 'description': 'UPPER_SNAKE name, e.g. AWS_SECRET_ACCESS_KEY'},
+         'reason': {'type': 'string', 'description': 'One line shown to the user: why it is needed'},
+         'type': {'type': 'string', 'enum': ['text', 'login', 'file'], 'default': 'text'}}}},
+    {'name': 'keyward_request_code',
+     'description': 'Ask the user for a 2-step verification code (authenticator app, SMS or email code). A dialog appears on their Mac; the code is stored for 5 minutes and deleted after one use. Use it with keyward_run.',
+     'inputSchema': {'type': 'object', 'required': ['name', 'reason'], 'properties': {
+         'name': {'type': 'string', 'description': 'e.g. AWS_MFA_CODE'},
+         'reason': {'type': 'string', 'description': 'Which account and why'}}}},
+    {'name': 'keyward_run',
+     'description': 'Run a shell command with secrets from the vault as environment variables. The user approves with Touch ID; the prompt shows the command. Secret values in the output are replaced with «NAME». A login named X provides $X_USERNAME and $X_PASSWORD; a file secret provides a path to a temporary file that is deleted afterwards. Never print secrets on purpose.',
+     'inputSchema': {'type': 'object', 'required': ['command', 'secrets'], 'properties': {
+         'command': {'type': 'string', 'description': 'Shell command, e.g. aws s3 ls'},
+         'secrets': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Secret names, optionally NAME=ENV_VAR'},
+         'cwd': {'type': 'string'},
+         'timeout_seconds': {'type': 'integer', 'default': 120}}}},
+    {'name': 'keyward_remove', 'description': 'Delete a secret from the vault. The user confirms in a dialog.',
+     'inputSchema': {'type': 'object', 'required': ['name'], 'properties': {'name': {'type': 'string'}}}},
+]
+
+
+def parse_with(items):
+    out = []
+    for item in items:
+        name, _, var = item.partition('=')
+        out.append((check_name(name), check_name(var) if var else name))
+    return out
+
+
+def call_tool(name, a):
+    if name == 'keyward_list':
+        rows = listing()
+        if not rows:
+            return 'The vault is empty. Use keyward_request_secret to ask the user for a secret.'
+        return '\n'.join(f"{r['name']} ({r['type']}){r['extra']} — {r['note'] or 'no note'} — updated {r['updated']}" for r in rows)
+    if name == 'keyward_request_secret':
+        ask(a['name'], a.get('type', 'text'), a.get('reason', ''))
+        return f"Saved {a['name']} in the vault. Its value was not shown to you. Use it with keyward_run."
+    if name == 'keyward_request_code':
+        ask_code(a['name'], a.get('reason', ''))
+        return f"Saved the code as {a['name']} for 5 minutes (single use). Pass it to keyward_run as ${a['name']}."
+    if name == 'keyward_run':
+        code, out = run_with(parse_with(a['secrets']), a['command'], a['command'], a.get('cwd'), a.get('timeout_seconds', 120))
+        if len(out) > MAX_OUTPUT:
+            out = out[:MAX_OUTPUT] + f'\n[keyward: output cut at {MAX_OUTPUT} characters]'
+        return f'exit code {code}\n{out}'
+    if name == 'keyward_remove':
+        osa(f'display dialog {as_str("Delete " + a["name"] + " from Keyward?")} with title "Keyward" '
+            'buttons {"Cancel", "Delete"} default button "Cancel" with icon caution')
+        remove(a['name'])
+        return f"Deleted {a['name']}."
+    raise KeywardError(f'unknown tool {name}')
+
+
+def mcp():
+    def send(msg):
+        sys.stdout.write(json.dumps(msg) + '\n')
+        sys.stdout.flush()
+
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            send({'jsonrpc': '2.0', 'id': None, 'error': {'code': -32700, 'message': 'parse error'}})
+            continue
+        mid, method = msg.get('id'), msg.get('method')
+        if mid is None:
+            continue  # notification
+        if method == 'initialize':
+            send({'jsonrpc': '2.0', 'id': mid, 'result': {
+                'protocolVersion': msg.get('params', {}).get('protocolVersion', '2025-06-18'),
+                'capabilities': {'tools': {}},
+                'serverInfo': {'name': 'keyward', 'version': VERSION},
+                'instructions': 'Keyward holds the user\'s secrets. Never ask for secrets in chat: use keyward_request_secret / keyward_request_code, then keyward_run. You cannot read values, and you must not try to print them.'}})
+        elif method == 'tools/list':
+            send({'jsonrpc': '2.0', 'id': mid, 'result': {'tools': TOOLS}})
+        elif method == 'tools/call':
+            p = msg.get('params', {})
+            try:
+                text, err = call_tool(p.get('name'), p.get('arguments') or {}), False
+            except KeywardError as e:
+                text, err = f'Keyward: {e}', True
+            except Exception as e:  # keep the connector alive
+                text, err = f'Keyward error: {type(e).__name__}: {e}', True
+            send({'jsonrpc': '2.0', 'id': mid, 'result': {'content': [{'type': 'text', 'text': text}], 'isError': err}})
+        elif method == 'ping':
+            send({'jsonrpc': '2.0', 'id': mid, 'result': {}})
+        else:
+            send({'jsonrpc': '2.0', 'id': mid, 'error': {'code': -32601, 'message': f'unknown method {method}'}})
+
+
+# ---------- CLI ----------
+
+def opt(args, flag, default=None):
+    if flag in args:
+        i = args.index(flag)
+        if i + 1 >= len(args):
+            raise KeywardError(f'{flag} needs a value')
+        val = args[i + 1]
+        del args[i:i + 2]
+        return val
+    return default
+
+
+def main(argv):
+    if not argv or argv[0] in ('-h', '--help', 'help'):
+        print(__doc__.strip())
+        return 0
+    cmd, args = argv[0], argv[1:]
+    if cmd == 'mcp':
+        mcp()
+    elif cmd == 'init':
+        print(core(['init']).strip())
+    elif cmd == 'status':
+        st = core(['status']).strip()
+        auth = 'touch-id-or-password' if config().get('allow_password') else 'touch-id-only'
+        print(f'{st} approval={auth} secrets={len(load()["secrets"])} vault={VAULT}')
+    elif cmd == 'config':
+        if args[:1] == ['password'] and args[1:2] in (['on'], ['off']):
+            set_config('allow_password', args[1] == 'on')
+            print('keyward: approval is now ' + ('Touch ID or Mac password' if args[1] == 'on' else 'Touch ID only (no password field)'))
+        else:
+            raise KeywardError('usage: keyward config password on|off')
+    elif cmd == 'ask':
+        kind, reason = opt(args, '--type', 'text'), opt(args, '--reason', '')
+        ask(args[0] if args else '', kind, reason)
+        print(f'keyward: saved {args[0]}. Its value was not shown.')
+    elif cmd == 'code':
+        reason = opt(args, '--reason', '')
+        ask_code(args[0] if args else '', reason)
+        print(f'keyward: code saved as {args[0]} (5 minutes, single use).')
+    elif cmd == 'set':
+        path = opt(args, '--file')
+        name = args[0] if args else ''
+        if path:
+            with open(os.path.expanduser(path), 'rb') as f:
+                put(name, 'file', f.read())
+        else:
+            if not sys.stdin.isatty():
+                raise KeywardError(f'no terminal to type into. Use: keyward ask {name}')
+            put(name, 'text', getpass.getpass(f'{name} (hidden): ').encode())
+        print(f'keyward: saved {name}.')
+    elif cmd in ('list', 'ls'):
+        rows = listing()
+        if not rows:
+            print('The vault is empty. Add a secret with: keyward ask NAME')
+        w = max([len(r['name']) for r in rows] or [0])
+        for r in rows:
+            print(f"{r['name']:<{w}}  {r['type']:<5}  {r['updated']}  {r['note']}{r['extra']}")
+    elif cmd == 'rm':
+        remove(args[0] if args else '')
+        print(f'keyward: removed {args[0]}')
+    elif cmd == 'run':
+        if '--' not in args:
+            raise KeywardError('usage: keyward run --with NAME[=VAR] ... -- COMMAND ...')
+        i = args.index('--')
+        opts, command = args[:i], args[i + 1:]
+        withs = []
+        while opts:
+            if opts[0] != '--with' or len(opts) < 2:
+                raise KeywardError(f'unknown option {opts[0]}')
+            withs.append(opts[1])
+            opts = opts[2:]
+        code, _ = run_with(parse_with(withs), command, shlex.join(command),
+                           stream=lambda t: (sys.stdout.write(t), sys.stdout.flush()))
+        return code
+    else:
+        print(__doc__.strip())
+        return 2
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeywardError as e:
+        print(f'keyward: {e}', file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)

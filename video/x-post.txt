@@ -1,0 +1,26 @@
+=== SHORT (fits 280 characters) ===
+Stop pasting API keys into AI chats.
+
+Keyward: a vault Claude can use, but never read.
+
+🔐 Sealed by your Mac's Secure Enclave
+👆 Touch ID for every use
+🔢 2-step codes, used once
+
+Free + open source for Claude Code:
+github.com/kirpajeet12/keyward
+
+=== LONG (X Premium) ===
+Stop pasting API keys into AI chats.
+
+I built Keyward: a vault Claude can use, but never read.
+
+🔐 Secrets sealed by your Mac's Secure Enclave
+👆 Touch ID for every single use
+🙈 Claude only ever sees «AWS_SECRET», never the value
+🔢 2-step codes: used once, gone in 5 minutes
+
+Free + open source. Works in Claude Code and Claude desktop:
+/plugin marketplace add kirpajeet12/keyward
+
+github.com/kirpajeet12/keyward

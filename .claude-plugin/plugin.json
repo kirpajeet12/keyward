@@ -1,0 +1,16 @@
+{
+  "name": "keyward",
+  "version": "1.0.0",
+  "description": "A vault Claude can use but never read. Secrets are sealed by your Mac's Secure Enclave, every use needs Touch ID, and 2-step codes are asked for in a secure dialog.",
+  "author": { "name": "kirpajeet12", "url": "https://github.com/kirpajeet12" },
+  "homepage": "https://github.com/kirpajeet12/keyward",
+  "repository": "https://github.com/kirpajeet12/keyward",
+  "license": "MIT",
+  "keywords": ["secrets", "vault", "security", "touch-id", "secure-enclave", "mcp", "2fa"],
+  "mcpServers": {
+    "keyward": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/keyward",
+      "args": ["mcp"]
+    }
+  }
+}

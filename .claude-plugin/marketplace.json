@@ -1,0 +1,14 @@
+{
+  "name": "keyward",
+  "owner": { "name": "kirpajeet12", "url": "https://github.com/kirpajeet12" },
+  "metadata": { "description": "Keyward: secrets Claude can use but never read." },
+  "plugins": [
+    {
+      "name": "keyward",
+      "source": "./",
+      "description": "A vault Claude can use but never read. Secure Enclave encryption, Touch ID approval for every use, secure 2-step code prompts.",
+      "version": "1.0.0",
+      "category": "security"
+    }
+  ]
+}
